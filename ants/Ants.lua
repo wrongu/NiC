@@ -1,3 +1,5 @@
+-- This Lua interface to the Ants game is courtesy of http://ants.aichallenge.org/starter_packages.php
+-- (with some modifications of my own)
 
 local ants = {
 	bot = nil,
