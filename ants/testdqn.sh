@@ -1,1 +1,1 @@
-python tools/playgame.py "dqnbot/torch/bin/luajit dqnbot/DQNBot.lua" "python tools/sample_bots/python/HunterBot.py" --map_file tools/maps/example/tutorial1.map --log_dir game_logs --turns 60 --scenario --food none --player_seed 7 --verbose -e
+python tools/playgame.py "dqnbot/torch/bin/luajit DQNBot.lua" "python tools/sample_bots/python/HunterBot.py" --map_file tools/maps/example/tutorial1.map --log_dir game_logs --turns 1000 --scenario --food none --player_seed 7 --verbose -e

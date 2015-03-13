@@ -9,13 +9,15 @@ from Minh et al 2015
 --]]
 
 local ants  = require "Ants"
+
+package.path = package.path .. ';dqnbot/?.lua'
+
 require 'torch'
 require 'initenv'
 require 'nn'
 require 'nngraph'
 require 'nnutils'
 require 'image'
-require 'Scale'
 require 'NeuralQLearner'
 require 'TransitionTable'
 require 'Rectifier'
@@ -26,11 +28,17 @@ cmd:text('Train Agent in Environment:')
 cmd:text()
 cmd:text('Options:')
 
-cmd:option('-network', 'convnet_atari3', 'network module or .t7 file')
+cmd:option('-network', 'convnet_ants', 'network module or .t7 file')
 
 cmd:text()
 
 local opt = cmd:parse(arg)
+
+-- Scoring for reinforcement learning
+local VALUE = {
+	ANT = 1,
+	HILL = 100
+}
 
 --[[
 args to nql:init are as follows:
@@ -50,7 +58,7 @@ args to nql:init are as follows:
  - discount          'gamma' of TD learning
  - update_freq       number of steps between minibatch updates
  - n_replay          number of learning steps per update
- - learn_start       frame # where learning starts (makes sense for games that have a loading screen with set # frames)
+ - learn_start       frame # where learning starts (must be larger than batch size)
  - replay_memory     max size of history table
  - hist_len          number of frames processed for current turn (set to 4 in paper)
  - rescale_r         whether reward should be clamped/rescaled
@@ -83,9 +91,8 @@ local bot = {}
 function bot:onReady()
 	-- initialization
 	args = {}
-	args.state_dim      = 40*40*4 -- 4 image layers; each image 40px square (all maps will be resized to this)
 	args.actions        = {"N", "S", "E", "W", "C"} -- an ant may move NSEW or stay still (C for center)
-	args.verbose        = nil
+	args.verbose        = 2
 	args.best           = true
 	args.ep             = 1
 	args.ep_end         = 0.05
@@ -93,12 +100,12 @@ function bot:onReady()
 	args.lr             = 0.00025
 	args.lr_endt        = args.ep_endt -- learning stops at the same time we switch into "expert" mode
 	args.wc             = 0 -- no normalization
-	args.minibatch_size = 32
-	args.valid_size     = 500
+	args.minibatch_size = 5
+	args.valid_size     = 50
 	args.discount       = 0.99 -- looking far into the future
 	args.update_freq    = 4
-	args.n_replay       = 1
-	args.learn_start    = 0 -- go on first frame
+	args.n_replay       = 6
+	args.learn_start    = 100 -- must be larger than max(minibatch size, validation size, bufferSize)
 	args.replay_memory  = args.ep_endt -- no need to remember farther back than # steps used for learning
 	args.hist_len       = 3 -- make decisions based on last 3 frames
 	args.layer_1_width  = 40
@@ -107,18 +114,22 @@ function bot:onReady()
 	args.min_reward     = -1
 	args.clip_delta     = 1
 	args.target_q       = 100 -- update target Q every 100 steps (should be larger??)
-	args.gpu            = 1
+	args.gpu            = -1
 	args.ncols          = 4 -- ants bot has a color channel for {land, ants, food, hills}
-	args.preproc        = "preprocess_rescale"
-	args.bufferSize     = 512
+	args.preproc        = "dqnbot.preprocess_toroidal_tile"
+	args.bufferSize     = 64
 	args.network        = opt.network -- defaults to "convent_atari3", otherwise loads from -network command line option
-
-	-- store some key info in self
-	self.image_width = layer_1_width
+	args.state_dim      = args.ncols * args.layer_1_width * args.layer_1_width
 
 	-- create agent
 	torchSetup(args)
-	self.dqn_agent = dqnbot(args)
+	self.dqn_agent = DQNBot(args)
+
+	-- store some key info in self
+	self.image_width = layer_1_width
+	self.valid_actions = args.actions
+	self.score = VALUE.ANT -- start with a score of 1
+	self.ncols = args.ncols
 
 	-- tell engine we're ready
 	ants:finishTurn()
@@ -129,8 +140,8 @@ function bot:map_to_tensor()
 	local cols = ants.config.cols
 
 	if not self.tensor_map then
-		self.tensor_map = torch.Tensor(4, rows, cols)
-		self.map2x2 = torch.Tensor(4, 2*rows, 2*cols)
+		self.tensor_map = torch.Tensor(self.ncols, rows, cols)
+		self.map2x2 = torch.Tensor(self.ncols, 2*rows, 2*cols)
 	end
 	-- clear values from previous update
 	self.tensor_map:zero()
@@ -139,7 +150,7 @@ function bot:map_to_tensor()
 	-- [1, :, :] = terrain { -1 water, 1 land}
 	-- [2, :, :] = ants {-1 enemy, 0 empty, 1 ally}
 	-- [3, :, :] = food {0 empty, 1 food}
-	-- [4, :, :] = hives {-1 enemy, 0 empty, 1 ally}
+	-- [4, :, :] = hills {-1 enemy, 0 empty, 1 ally}
 
 	for r = 0, rows-1 do
 		for c = 0, cols-1 do
@@ -152,7 +163,8 @@ function bot:map_to_tensor()
 		end
 	end
 
-	-- each other map (ants, food, hives) is stored in an array
+	-- each other map (ants, food, hills) is stored in an array
+	-- todo (?) abstract this into table {ant=2, food=3, hill=4}
 	for _,ant in ipairs(ants.ants) do
 		local team = ant.owner == 0 and 1 or -1 -- ternary conditional
 		self.tensor_map[2][ant.row+1][ant.col+1] = team
@@ -168,10 +180,10 @@ function bot:map_to_tensor()
 	end
 
 	-- tile the map into 2x2 (makes toroidal topology easier to index later)
-	map2x2:sub(1, 4, 1,      rows,   1,      cols):copy(self.tensor_map)
-	map2x2:sub(1, 4, 1,      rows,   cols+1, 2*cols):copy(self.tensor_map)
-	map2x2:sub(1, 4, rows+1, 2*rows, 1,      cols):copy(self.tensor_map)
-	map2x2:sub(1, 4, rows+1, 2*rows, cols+1, 2*cols):copy(self.tensor_map)
+	self.map2x2:sub(1, self.ncols, 1,      rows,   1,      cols):copy(self.tensor_map)
+	self.map2x2:sub(1, self.ncols, 1,      rows,   cols+1, 2*cols):copy(self.tensor_map)
+	self.map2x2:sub(1, self.ncols, rows+1, 2*rows, 1,      cols):copy(self.tensor_map)
+	self.map2x2:sub(1, self.ncols, rows+1, 2*rows, cols+1, 2*cols):copy(self.tensor_map)
 
 	return self.tensor_map
 end
@@ -201,7 +213,7 @@ function bot:egocentric_map(row, col)
 	local dc = cc - col
 	-- indices in map2x2 from which (row x col) egocentric map is copied
 	local row_slice = {1-dr, rows-dr}
-	local col_slice = {1-dc, rols-dc}
+	local col_slice = {1-dc, cols-dc}
 
 	if row_slice[1] < 1 then
 		row_slice = {row_slice[1] + rows, row_slice[2] + rows}
@@ -210,7 +222,11 @@ function bot:egocentric_map(row, col)
 		col_slice = {col_slice[1] + cols, col_slice[2] + cols}
 	end
 
-	return self.map2x2:sub(1, 4, row_slice[1], row_slice[2], col_slice[1], col_slice[2])
+	return self.map2x2:sub(1, self.ncols, row_slice[1], row_slice[2], col_slice[1], col_slice[2])
+end
+
+function bot:compute_score()
+	return #ants:myAnts() * VALUE.ANT + #ants:myHills() * VALUE.HILL
 end
 
 function bot:onTurn()
@@ -221,22 +237,123 @@ function bot:onTurn()
 	-- For each ant, get egocentric map of the world then perceive() and act
 	local myAnts = ants:myAnts()
 
+	local current_score = self:compute_score()
+	local delta_score = current_score - self.score
+	self.score = current_score
+
+	local game_over = #ants:myHills() == 0
+
 	-- DEBUGGING
-	if ants.currentTurn == 10 then
-		for i,ant in myAnts do
-			m = self:egocentric_map(ant.row, ant.col)
-			image.save('test/ant.' .. i .. '.land.png',  m[1])
-			image.save('test/ant.' .. i .. '.ants.png',  m[2])
-			image.save('test/ant.' .. i .. '.food.png',  m[3])
-			image.save('test/ant.' .. i .. '.hills.png', m[4])
+	-- if ants.currentTurn == 15 then
+	-- 	for i,ant in ipairs(myAnts) do
+	-- 		m = self:egocentric_map(ant.row, ant.col)
+	-- 		image.save('test/ant.' .. i .. '.land.png',  m[1]:add(1):mul(0.5))
+	-- 		image.save('test/ant.' .. i .. '.ants.png',  m[2]:add(1):mul(0.5))
+	-- 		image.save('test/ant.' .. i .. '.food.png',  m[3]:add(1):mul(0.5))
+	-- 		image.save('test/ant.' .. i .. '.hills.png', m[4]:add(1):mul(0.5))
+	-- 	end
+	-- end
+
+	for _,ant in ipairs(myAnts) do
+		m = self:egocentric_map(ant.row, ant.col)
+		self.dqn_agent:perceive(delta_score, m, game_over)
+	end
+
+	-- ants:finishTurn()
+	self:doSomething()
+end
+
+function contains(t, k)
+	return t[k] ~= nil
+end
+
+
+function bot:doSomething()
+	local myAnts = ants:myAnts()
+	local directions = { "N", "E", "S", "W" }
+
+	-- long distance targets
+	local ant_target_map = {} 
+	local target_ant_map = {}
+	-- immediate steps
+	local ant_step_map = {}
+	-- unordered set of next-step-locations
+	local occupied = {}
+
+	-- target 1: get food
+	for _,food in ipairs(ants.food) do
+		closest_dist, closest_id = 10000, -1
+		food_id = ants:flattenRowCol(food.row, food.col)
+		for _,ant in ipairs(myAnts) do
+			ant_id = ants:flattenRowCol(ant.row, ant.col)
+			if not contains(ant_target_map, ant_id) then
+				d = ants:distance(ant.row, ant.col, food.row, food.col)
+				if d < closest_dist then
+					closest_dist = d
+					closest_id = ant_id
+				end
+			end
+		end
+		if closest_id > -1 then
+			ant_row, ant_col = ants:unflatten(closest_id)
+			dir = ants:direction(ant_row, ant_col, ants:unflatten(food_id))[1]
+			r, c = ants:adjacentRowCol(ant_row, ant_col, dir)
+			if not contains(occupied, ants:flattenRowCol(r,c)) then
+				ant_target_map[closest_id] = food_id
+				target_ant_map[food_id] = closest_id
+				occupied[ants:flattenRowCol(r,c)] = true
+				ant_step_map[closest_id] = dir
+			end
 		end
 	end
 
+	-- target 3: attack enemy hill
+	for _,hill in ipairs(ants:enemyHills()) do
+		closest_dist, closest_id = 10000, -1
+		hill_id = ants:flattenRowCol(hill.row, hill.col)
+		for _,ant in ipairs(myAnts) do
+			ant_id = ants:flattenRowCol(ant.row, ant.col)
+			if not contains(ant_target_map, ant_id) then
+				d = ants:distance(ant.row, ant.col, hill.row, hill.col)
+				if d < closest_dist then
+					closest_dist = d
+					closest_id = ant_id
+				end
+			end
+		end
+		if closest_id > -1 then
+			ant_row, ant_col = ants:unflatten(closest_id)
+			dir = ants:direction(ant_row, ant_col, ants:unflatten(hill_id))[1]
+			r, c = ants:adjacentRowCol(ant_row, ant_col, dir)
+			if not contains(occupied, ants:flattenRowCol(r,c)) and ants:passable(ant_row, ant_col, dir) then
+				ant_target_map[closest_id] = hill_id
+				target_ant_map[hill_id] = closest_id
+				occupied[ants:flattenRowCol(r,c)] = true
+				ant_step_map[closest_id] = dir
+			end
+		end
+	end
 
-	local queue_actions = {}
+	-- target 4: wander
 
 	for _,ant in ipairs(myAnts) do
-		--
+		ant_id = ants:flattenRowCol(ant.row, ant.col)
+		if not contains(ant_target_map, ant_id) then
+			for _,dir in ipairs(directions) do
+				local flat_target = ants:flattenRowCol(ants:adjacentRowCol(ant.row, ant.col, dir))
+				if ants:passable(ant.row, ant.col, dir) and not contains(occupied, flat_target) then
+					ant_step_map[ant_id] = dir
+					occupied[flat_target] = true
+					break
+				end
+			end
+		end
+	end
+
+	-- issue turns
+	for ant_id, dir in pairs(ant_step_map) do
+		row, col = ants:unflatten(ant_id)
+		ants:issueOrder(row, col, dir)
 	end
 
 	ants:finishTurn()
