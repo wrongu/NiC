@@ -29,6 +29,9 @@ cmd:text()
 cmd:text('Options:')
 
 cmd:option('-network', 'convnet_ants', 'network module or .t7 file')
+cmd:option('-seed', os.time(), 'random seed')
+cmd:option('-test', false, 'if testing, no save and no learning')
+cmd:option('-testing_ep', 0.95, 'percent greediness in testing mode')
 cmd:option('-save_dir', 'dqnbot/saved_networks', 'directory to save snapshots')
 cmd:option('-save_name', '', 'filename for saving networks, ending in .<generation i>')
 cmd:option('-resume', false, 'whether to load i-1th network')
@@ -101,7 +104,7 @@ function bot:onReady()
 	args.best           = true
 	args.ep             = 1
 	args.ep_end         = 0.05
-	args.ep_endt        = 100000
+	args.ep_endt        = math.floor(opt.nturns*0.9)
 	args.lr             = 0.00025
 	args.lr_endt        = args.ep_endt -- learning stops at the same time we switch into "expert" mode
 	args.wc             = 0 -- no normalization
@@ -125,6 +128,7 @@ function bot:onReady()
 	args.bufferSize     = 64
 	args.network        = opt.network -- defaults to "convent_atari3", otherwise loads from -network command line option
 	args.state_dim      = args.ncols * args.layer_1_width * args.layer_1_width
+	args.seed           = opt.seed
 
 	-- load last network if specified
 	if opt.resume then
@@ -142,6 +146,8 @@ function bot:onReady()
 	torchSetup(args)
 	self.dqn_agent = DQNBot(args)
 	self.reward_history = {}
+	self.testing = opt.test
+	self.testing_ep = opt.testing_ep
 
 	-- store some key info in self
 	self.image_width = layer_1_width
@@ -303,14 +309,14 @@ function bot:onTurn()
 
 	for _,ant in ipairs(myAnts) do
 		m = self:egocentric_map(ant.row, ant.col)
-		local action_idx = self.dqn_agent:perceive(delta_score, m, game_over)
+		local action_idx = self.dqn_agent:perceive(delta_score, m, game_over, self.testing, self.testing_ep)
 		local action = self.valid_actions[action_idx]
 		if action and action ~= "C" and ants:passable(ant.row, ant.col, action) then
 			ants:issueOrder(ant.row, ant.col, action)
 		end
 	end
 
-	if game_over or ants.currentTurn >= opt.save_freq and ants.currentTurn % opt.save_freq == 0 then
+	if not self.testing and game_over or ants.currentTurn >= opt.save_freq and ants.currentTurn % opt.save_freq == 0 then
 		self:save()
 	end
 
