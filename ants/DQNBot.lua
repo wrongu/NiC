@@ -29,6 +29,11 @@ cmd:text()
 cmd:text('Options:')
 
 cmd:option('-network', 'convnet_ants', 'network module or .t7 file')
+cmd:option('-save_dir', 'dqnbot/saved_networks', 'directory to save snapshots')
+cmd:option('-save_name', '', 'filename for saving networks, ending in .<generation i>')
+cmd:option('-resume', false, 'whether to load i-1th network')
+cmd:option('-save_freq', 200, 'frequency to overwrite save file (dont know when game is over)')
+cmd:option('-nturns', 1000, 'max # turns in this game (so we know when game is over)')
 
 cmd:text()
 
@@ -121,9 +126,22 @@ function bot:onReady()
 	args.network        = opt.network -- defaults to "convent_atari3", otherwise loads from -network command line option
 	args.state_dim      = args.ncols * args.layer_1_width * args.layer_1_width
 
+	-- load last network if specified
+	if opt.resume then
+		local base_name, generation = string.match(opt.save_name, "(.+)%.(%d)$")
+		if generation then
+			generation = tonumber(generation)
+			if generation > 1 then
+				args.network = opt.save_dir .. "/" .. base_name .. "." .. (generation-1) .. ".t7"
+				io.stderr:write(args.network .. "\n"); io.stderr:flush()
+			end
+		end
+	end
+
 	-- create agent
 	torchSetup(args)
 	self.dqn_agent = DQNBot(args)
+	self.reward_history = {}
 
 	-- store some key info in self
 	self.image_width = layer_1_width
@@ -191,8 +209,8 @@ end
 function bot:egocentric_map(row, col)
 	--[[
 		translate the map so that the map coordinate (row, col) is in the center.
-              c
-	    aaaaaa|bb      aaaa|bbaa  
+			  c
+		aaaaaa|bb      aaaa|bbaa  
 		aaaaaa|bb      aaaa|bbaa
 		aaaaaa|bb  ->  ----+----
 		------+-- r    cccc|ddcc
@@ -229,6 +247,33 @@ function bot:compute_score()
 	return #ants:myAnts() * VALUE.ANT + #ants:myHills() * VALUE.HILL
 end
 
+function bot:save()
+	-- save network parameters and history (copied from train_agent.lua, part of the original DQN code)
+	local agent = self.dqn_agent
+	local s, a, r, s2, term = agent.valid_s, agent.valid_a, agent.valid_r,
+		agent.valid_s2, agent.valid_term
+	agent.valid_s, agent.valid_a, agent.valid_r, agent.valid_s2,
+		agent.valid_term = nil, nil, nil, nil, nil, nil, nil
+	local w, dw, g, g2, delta, delta2, deltas, tmp = agent.w, agent.dw,
+		agent.g, agent.g2, agent.delta, agent.delta2, agent.deltas, agent.tmp
+	agent.w, agent.dw, agent.g, agent.g2, agent.delta, agent.delta2,
+		agent.deltas, agent.tmp = nil, nil, nil, nil, nil, nil, nil, nil
+
+	local filename = opt.save_dir .. "/" .. opt.save_name
+	torch.save(filename..'.t7', {agent = agent,
+						model = agent.network,
+						best_model = agent.best_network,
+						reward_history = self.reward_history})
+	local nets = {network=w:clone():float()}
+	torch.save(filename..'.params.t7', nets, 'ascii')
+	agent.valid_s, agent.valid_a, agent.valid_r, agent.valid_s2,
+		agent.valid_term = s, a, r, s2, term
+	agent.w, agent.dw, agent.g, agent.g2, agent.delta, agent.delta2,
+		agent.deltas, agent.tmp = w, dw, g, g2, delta, delta2, deltas, tmp
+	io.flush()
+	collectgarbage()
+end
+
 function bot:onTurn()
 	-- state updates already happened in Ants.lua
 	-- update tensor map (i.e. translate from ants grid to a torch tensor)
@@ -240,27 +285,33 @@ function bot:onTurn()
 	local current_score = self:compute_score()
 	local delta_score = current_score - self.score
 	self.score = current_score
+	table.insert(self.reward_history, delta_score)
 
-	local game_over = #ants:myHills() == 0
+	-- note: can't see enemy hills, so counting them will be 0 at the start
+	local game_over = #ants:myHills() == 0 or ants.currentTurn > opt.nturns
 
 	-- DEBUGGING
 	-- if ants.currentTurn == 15 then
-	-- 	for i,ant in ipairs(myAnts) do
-	-- 		m = self:egocentric_map(ant.row, ant.col)
-	-- 		image.save('test/ant.' .. i .. '.land.png',  m[1]:add(1):mul(0.5))
-	-- 		image.save('test/ant.' .. i .. '.ants.png',  m[2]:add(1):mul(0.5))
-	-- 		image.save('test/ant.' .. i .. '.food.png',  m[3]:add(1):mul(0.5))
-	-- 		image.save('test/ant.' .. i .. '.hills.png', m[4]:add(1):mul(0.5))
-	-- 	end
+	--  for i,ant in ipairs(myAnts) do
+	--      m = self:egocentric_map(ant.row, ant.col)
+	--      image.save('test/ant.' .. i .. '.land.png',  m[1]:add(1):mul(0.5))
+	--      image.save('test/ant.' .. i .. '.ants.png',  m[2]:add(1):mul(0.5))
+	--      image.save('test/ant.' .. i .. '.food.png',  m[3]:add(1):mul(0.5))
+	--      image.save('test/ant.' .. i .. '.hills.png', m[4]:add(1):mul(0.5))
+	--  end
 	-- end
 
 	for _,ant in ipairs(myAnts) do
 		m = self:egocentric_map(ant.row, ant.col)
 		local action_idx = self.dqn_agent:perceive(delta_score, m, game_over)
 		local action = self.valid_actions[action_idx]
-		if action ~= "C" and ants:passable(ant.row, ant.col, action) then
+		if action and action ~= "C" and ants:passable(ant.row, ant.col, action) then
 			ants:issueOrder(ant.row, ant.col, action)
 		end
+	end
+
+	if game_over or ants.currentTurn >= opt.save_freq and ants.currentTurn % opt.save_freq == 0 then
+		self:save()
 	end
 
 	ants:finishTurn()
