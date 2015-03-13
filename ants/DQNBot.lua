@@ -256,107 +256,18 @@ function bot:onTurn()
 
 	for _,ant in ipairs(myAnts) do
 		m = self:egocentric_map(ant.row, ant.col)
-		self.dqn_agent:perceive(delta_score, m, game_over)
+		local action_idx = self.dqn_agent:perceive(delta_score, m, game_over)
+		local action = self.valid_actions[action_idx]
+		if action ~= "C" and ants:passable(ant.row, ant.col, action) then
+			ants:issueOrder(ant.row, ant.col, action)
+		end
 	end
 
-	-- ants:finishTurn()
-	self:doSomething()
+	ants:finishTurn()
 end
 
 function contains(t, k)
 	return t[k] ~= nil
-end
-
-
-function bot:doSomething()
-	local myAnts = ants:myAnts()
-	local directions = { "N", "E", "S", "W" }
-
-	-- long distance targets
-	local ant_target_map = {} 
-	local target_ant_map = {}
-	-- immediate steps
-	local ant_step_map = {}
-	-- unordered set of next-step-locations
-	local occupied = {}
-
-	-- target 1: get food
-	for _,food in ipairs(ants.food) do
-		closest_dist, closest_id = 10000, -1
-		food_id = ants:flattenRowCol(food.row, food.col)
-		for _,ant in ipairs(myAnts) do
-			ant_id = ants:flattenRowCol(ant.row, ant.col)
-			if not contains(ant_target_map, ant_id) then
-				d = ants:distance(ant.row, ant.col, food.row, food.col)
-				if d < closest_dist then
-					closest_dist = d
-					closest_id = ant_id
-				end
-			end
-		end
-		if closest_id > -1 then
-			ant_row, ant_col = ants:unflatten(closest_id)
-			dir = ants:direction(ant_row, ant_col, ants:unflatten(food_id))[1]
-			r, c = ants:adjacentRowCol(ant_row, ant_col, dir)
-			if not contains(occupied, ants:flattenRowCol(r,c)) then
-				ant_target_map[closest_id] = food_id
-				target_ant_map[food_id] = closest_id
-				occupied[ants:flattenRowCol(r,c)] = true
-				ant_step_map[closest_id] = dir
-			end
-		end
-	end
-
-	-- target 3: attack enemy hill
-	for _,hill in ipairs(ants:enemyHills()) do
-		closest_dist, closest_id = 10000, -1
-		hill_id = ants:flattenRowCol(hill.row, hill.col)
-		for _,ant in ipairs(myAnts) do
-			ant_id = ants:flattenRowCol(ant.row, ant.col)
-			if not contains(ant_target_map, ant_id) then
-				d = ants:distance(ant.row, ant.col, hill.row, hill.col)
-				if d < closest_dist then
-					closest_dist = d
-					closest_id = ant_id
-				end
-			end
-		end
-		if closest_id > -1 then
-			ant_row, ant_col = ants:unflatten(closest_id)
-			dir = ants:direction(ant_row, ant_col, ants:unflatten(hill_id))[1]
-			r, c = ants:adjacentRowCol(ant_row, ant_col, dir)
-			if not contains(occupied, ants:flattenRowCol(r,c)) and ants:passable(ant_row, ant_col, dir) then
-				ant_target_map[closest_id] = hill_id
-				target_ant_map[hill_id] = closest_id
-				occupied[ants:flattenRowCol(r,c)] = true
-				ant_step_map[closest_id] = dir
-			end
-		end
-	end
-
-	-- target 4: wander
-
-	for _,ant in ipairs(myAnts) do
-		ant_id = ants:flattenRowCol(ant.row, ant.col)
-		if not contains(ant_target_map, ant_id) then
-			for _,dir in ipairs(directions) do
-				local flat_target = ants:flattenRowCol(ants:adjacentRowCol(ant.row, ant.col, dir))
-				if ants:passable(ant.row, ant.col, dir) and not contains(occupied, flat_target) then
-					ant_step_map[ant_id] = dir
-					occupied[flat_target] = true
-					break
-				end
-			end
-		end
-	end
-
-	-- issue turns
-	for ant_id, dir in pairs(ant_step_map) do
-		row, col = ants:unflatten(ant_id)
-		ants:issueOrder(row, col, dir)
-	end
-
-	ants:finishTurn()
 end
 
 function bot:onEnd()
