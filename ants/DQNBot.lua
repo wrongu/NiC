@@ -116,7 +116,7 @@ function bot:onReady()
 	args.learn_start    = 100 -- must be larger than max(minibatch size, validation size, bufferSize)
 	args.replay_memory  = args.ep_endt -- no need to remember farther back than # steps used for learning
 	args.hist_len       = 3 -- make decisions based on last 3 frames
-	args.layer_1_width  = 40
+	args.layer_1_width  = 28
 	args.rescale_r      = true
 	args.max_reward     = 1
 	args.min_reward     = -1
@@ -321,10 +321,6 @@ function bot:onTurn()
 	end
 
 	ants:finishTurn()
-end
-
-function contains(t, k)
-	return t[k] ~= nil
 end
 
 function bot:onEnd()
