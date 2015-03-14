@@ -9,8 +9,9 @@ from Minh et al 2015
 --]]
 
 local ants  = require "Ants"
-
-package.path = package.path .. ';dqnbot/?.lua'
+local home = os.getenv("HOME")
+local local_rocks_dir = home .. '/.luarocks/share/lua/5.1'
+package.path = package.path .. ';dqnbot/?.lua;'..local_rocks_dir..'/?.lua;'..local_rocks_dir..'/?/init.lua'
 
 require 'torch'
 require 'initenv'
