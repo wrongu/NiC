@@ -106,21 +106,21 @@ function bot:onReady()
 	args.ep             = 1
 	args.ep_end         = 0.05
 	args.ep_endt        = math.floor(opt.nturns*0.9)
-	args.lr             = 0.00025
+	args.lr             = 0.0025
 	args.lr_endt        = args.ep_endt -- learning stops at the same time we switch into "expert" mode
 	args.wc             = 0 -- no normalization
-	args.minibatch_size = 5
+	args.minibatch_size = 16
 	args.valid_size     = 50
-	args.discount       = 0.99 -- looking far into the future
+	args.discount       = 0.95 -- looking relatively far into the future
 	args.update_freq    = 4
-	args.n_replay       = 6
+	args.n_replay       = 16
 	args.learn_start    = 100 -- must be larger than max(minibatch size, validation size, bufferSize)
 	args.replay_memory  = args.ep_endt -- no need to remember farther back than # steps used for learning
 	args.hist_len       = 3 -- make decisions based on last 3 frames
 	args.layer_1_width  = 28
 	args.rescale_r      = true
-	args.max_reward     = 1
-	args.min_reward     = -1
+	args.max_reward     = 5
+	args.min_reward     = -5
 	args.clip_delta     = 1
 	args.target_q       = 100 -- update target Q every 100 steps (should be larger??)
 	args.gpu            = -1
@@ -153,7 +153,7 @@ function bot:onReady()
 	-- store some key info in self
 	self.image_width = layer_1_width
 	self.valid_actions = args.actions
-	self.score = VALUE.ANT -- start with a score of 1
+	self.score = VALUE.ANT + VALUE.HILL -- game starts with 1 ant and 1 hill
 	self.ncols = args.ncols
 
 	-- tell engine we're ready
@@ -291,6 +291,7 @@ function bot:onTurn()
 
 	local current_score = self:compute_score()
 	local delta_score = current_score - self.score
+	io.stderr:write(self.score.." "..current_score.."\n")
 	self.score = current_score
 	table.insert(self.reward_history, delta_score)
 

@@ -84,7 +84,17 @@ function ants:processLine(line)
 		local row, col, owner = values:match("^(%d+) (%d+) (%d+)")
 		row, col, owner = tonumber(row), tonumber(col), tonumber(owner)
 		self.map[row][col] = { type = self.landTypes.HILL, data = { owner = owner } }
-		table.insert(self.hills, { row = row, col = col, owner = owner})
+		-- check that it's not already counted
+		local new = true
+		for _,hill in ipairs(self.hills) do
+			if hill.row == row and hill.col == col then
+				new = false
+				break
+			end
+		end
+		if new then
+			table.insert(self.hills, { row = row, col = col, owner = owner})
+		end
 	elseif type ~= nil and self.currentTurn == 0 then
 		-- On turn 0, we receive some (integer) settings
 		self.config[type] = tonumber(values)
