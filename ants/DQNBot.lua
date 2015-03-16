@@ -317,7 +317,7 @@ function bot:onTurn()
 		end
 	end
 
-	if not self.testing and game_over or ants.currentTurn >= opt.save_freq and ants.currentTurn % opt.save_freq == 0 then
+	if (not self.testing and game_over) or (ants.currentTurn >= opt.save_freq and ants.currentTurn % opt.save_freq == 0) then
 		self:save()
 	end
 
