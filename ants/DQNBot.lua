@@ -291,7 +291,6 @@ function bot:onTurn()
 
 	local current_score = self:compute_score()
 	local delta_score = current_score - self.score
-	io.stderr:write(self.score.." "..current_score.."\n")
 	self.score = current_score
 	table.insert(self.reward_history, delta_score)
 
