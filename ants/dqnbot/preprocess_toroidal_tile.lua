@@ -17,27 +17,27 @@ end
 
 function tile:prepareTiles(input)
 	-- allocate tensor on first pass only
-	local sz = input:size()
+	local inpt_sz = input:size()
 	if not self.tiles then
 		assert(input:dim() == 3)
 		self.gradInput = torch.Tensor():resizeAs(input):zero()
 
-	    local n_row_tiles = math.ceil(sz[2] / self.height) + 2
-	    local n_col_tiles = math.ceil(sz[3] / self.width) + 2
-	    self.tiles = torch.Tensor(sz[1], sz[2]*n_row_tiles, sz[3]*n_col_tiles):zero()
+	    local n_row_tiles = math.ceil(inpt_sz[2] / self.height) + 2
+	    local n_col_tiles = math.ceil(inpt_sz[3] / self.width) + 2
+	    self.tiles = torch.Tensor(inpt_sz[1], inpt_sz[2]*n_row_tiles, inpt_sz[3]*n_col_tiles):zero()
 
 	    -- slice indices into tile tensor such that center of input is center of output
-	    local cr = math.floor(n_row_tiles / 2) * sz[2] + math.floor(sz[2] / 2)
-	    local cc = math.floor(n_col_tiles / 2) * sz[3] + math.floor(sz[3] / 2)
+	    local cr = math.floor(n_row_tiles / 2) * inpt_sz[2] + math.floor(inpt_sz[2] / 2)
+	    local cc = math.floor(n_col_tiles / 2) * inpt_sz[3] + math.floor(inpt_sz[3] / 2)
 	    -- compute bounds: half width in each direction from center
 	    self.row_slice = {math.ceil(cr - self.height / 2), math.ceil(cr + self.height / 2 - 1)}
 	    self.col_slice = {math.ceil(cc - self.width / 2), math.ceil(cc + self.width / 2 - 1)}
 	end
 
 	-- copy input into tiles
-	for r = 1, self.tiles:size()[2], sz[2] do
-		for c = 1, self.tiles:size()[3], sz[3] do
-			self.tiles:sub(1, sz[1], r, r+sz[2]-1, c, c+sz[3]-1):copy(input)
+	for r = 1, self.tiles:size()[2], inpt_sz[2] do
+		for c = 1, self.tiles:size()[3], inpt_sz[3] do
+			self.tiles:sub(1, inpt_sz[1], r, r+inpt_sz[2]-1, c, c+inpt_sz[3]-1):copy(input)
 		end
 	end
 end
