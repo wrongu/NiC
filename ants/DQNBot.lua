@@ -180,7 +180,7 @@ function bot:map_to_tensor()
 	for r = 0, rows-1 do
 		for c = 0, cols-1 do
 			-- mark LAND and WATER
-			if ants.map[r][c] == ants.landTypes.WATER then
+			if ants.map[r][c].type == ants.landTypes.WATER then
 				self.tensor_map[1][r+1][c+1] = -1
 			else
 				self.tensor_map[1][r+1][c+1] = 1
@@ -298,15 +298,15 @@ function bot:onTurn()
 	local game_over = #ants:myHills() == 0 or ants.currentTurn > opt.nturns
 
 	-- DEBUGGING
-	-- if ants.currentTurn == 15 then
-	--  for i,ant in ipairs(myAnts) do
-	--      m = self:egocentric_map(ant.row, ant.col)
-	--      image.save('test/ant.' .. i .. '.land.png',  m[1]:add(1):mul(0.5))
-	--      image.save('test/ant.' .. i .. '.ants.png',  m[2]:add(1):mul(0.5))
-	--      image.save('test/ant.' .. i .. '.food.png',  m[3]:add(1):mul(0.5))
-	--      image.save('test/ant.' .. i .. '.hills.png', m[4]:add(1):mul(0.5))
-	--  end
-	-- end
+	if ants.currentTurn % 100 == 0 and ants.currentTurn > 0 then
+	 for i,ant in ipairs(myAnts) do
+	     m = self:egocentric_map(ant.row, ant.col)
+	     image.save('test/turn'..ants.currentTurn..'.ant.' .. i .. '.land.png',  m[1]:add(1):mul(0.5))
+	     image.save('test/turn'..ants.currentTurn..'.ant.' .. i .. '.ants.png',  m[2]:add(1):mul(0.5))
+	     image.save('test/turn'..ants.currentTurn..'.ant.' .. i .. '.food.png',  m[3]:add(1):mul(0.5))
+	     image.save('test/turn'..ants.currentTurn..'.ant.' .. i .. '.hills.png', m[4]:add(1):mul(0.5))
+	 end
+	end
 
 	for _,ant in ipairs(myAnts) do
 		m = self:egocentric_map(ant.row, ant.col)
