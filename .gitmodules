@@ -1,0 +1,3 @@
+[submodule "convnet_transfer"]
+	path = convnet_transfer
+	url = git@github.com:yosinski/convnet_transfer.git
